@@ -118,6 +118,8 @@ class ServerProcess:
     sleep_idle_seconds: int | None = None
     cache_ram: int | None = None
     override_kv: str | None = None
+    cache_disk: str | None = None
+    cache_disk_max: int | None = None
     no_cache_idle_slots: bool = False
     log_path: str | None = None
     ui_mcp_proxy: bool = False
@@ -295,6 +297,10 @@ class ServerProcess:
             server_args.extend(["--cache-ram", self.cache_ram])
         if self.override_kv:
             server_args.extend(["--override-kv", self.override_kv])
+        if self.cache_disk is not None:
+            server_args.extend(["--cache-disk", self.cache_disk])
+        if self.cache_disk_max is not None:
+            server_args.extend(["--cache-disk-max", self.cache_disk_max])
         if self.no_cache_idle_slots:
             server_args.append("--no-cache-idle-slots")
         if self.ui_mcp_proxy:

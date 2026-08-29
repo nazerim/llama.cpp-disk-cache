@@ -644,6 +644,10 @@ struct common_params {
     int32_t cache_ram_mib       = 8192;  // -1 = no limit, 0 - disable, 1 = 1 MiB, etc.
     bool    cache_ram_explicit  = false; // set by --cache-ram, decision models disable the cache otherwise
 
+    int32_t cache_disk_max_mib  = -1;    // -1 = no limit, 0 - disable, 1 = 1 MiB, etc.
+
+    std::string cache_disk_path;
+
     // llama-connect params
     bool        server_connect      = false;
     std::string server_connect_code = "";
