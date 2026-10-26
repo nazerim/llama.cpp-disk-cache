@@ -651,6 +651,7 @@ struct common_params {
 >>>>>>> f2431a23a (server : rename --cache-disk to --cache-dir)
 
     std::string cache_dir_path;
+    bool cache_dir_trim = false;       // drop a disk entry's resident pages once it is committed
 
     // llama-connect params
     bool        server_connect      = false;

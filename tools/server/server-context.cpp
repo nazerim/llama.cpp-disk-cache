@@ -1729,7 +1729,8 @@ private:
                 cache_limit_tokens,
                 cache_dir_enabled ? params_base.cache_dir_path : "",
                 cache_dir_enabled ? server_prompt_cache_key(params_base, ctx_tgt, ctx_dft) : "",
-                mctx != nullptr);
+                mctx != nullptr,
+                params_base.cache_dir_trim);
         } else {
             SRV_TRC("%s", "prompt cache is disabled - use `--cache-ram N` or `--cache-dir PATH` to enable it\n");
         }

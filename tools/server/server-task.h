@@ -799,7 +799,8 @@ struct server_prompt_cache {
         size_t limit_tokens,
         const std::string & cache_dir = "",
         const std::string & cache_key = "",
-        bool has_mtmd = false);
+        bool has_mtmd = false,
+        bool trim_after_commit = false);
 
     std::list<server_prompt_cache_state> states;
 
@@ -813,6 +814,9 @@ struct server_prompt_cache {
     std::string cache_key;
 
     bool has_mtmd = false;
+
+    // once an entry is durable on disk, its mapping is the entry's only copy in RAM
+    bool trim_after_commit = false;
 
     uint64_t next_file_id = 0;
 

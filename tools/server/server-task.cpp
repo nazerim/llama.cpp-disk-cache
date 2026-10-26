@@ -2038,6 +2038,29 @@ bool server_prompt_cache_flush_disk(server_prompt_data & data) {
     return true;
 }
 
+// after msync the file holds the full entry, so the resident pages can be dropped and will be
+// re-read from disk on the next reuse
+void server_prompt_cache_trim_disk(server_prompt_data & data) {
+#ifdef MADV_DONTNEED
+    const long page_size = sysconf(_SC_PAGESIZE);
+    size_t size = data.mapping_size;
+
+    if (page_size > 0) {
+        size &= ~(size_t) (page_size - 1);
+    }
+
+    if (size == 0) {
+        return;
+    }
+
+    if (madvise(data.mapping, size, MADV_DONTNEED) != 0) {
+        SRV_WRN("failed to trim disk cache file %s: %s\n", data.cache_file.c_str(), strerror(errno));
+    }
+#else
+    GGML_UNUSED(data);
+#endif
+}
+
 bool server_prompt_cache_open_disk(
         server_prompt_data & data,
         const std::filesystem::path & path,
@@ -2374,12 +2397,14 @@ server_prompt_cache::server_prompt_cache(
     size_t limit_tokens,
     const std::string & cache_dir,
     const std::string & cache_key,
-    bool has_mtmd) :
+    bool has_mtmd,
+    bool trim_after_commit) :
     limit_size(1024ull*1024ull*(limit_size_mib < 0 ? 0 : limit_size_mib)),
     limit_tokens(limit_tokens),
     cache_dir(cache_dir),
     cache_key(cache_key),
-    has_mtmd(has_mtmd) {
+    has_mtmd(has_mtmd),
+    trim_after_commit(trim_after_commit) {
     if (cache_dir.empty()) {
         return;
     }
@@ -2638,6 +2663,12 @@ bool server_prompt_cache::commit(server_prompt_cache_state * state) {
     }
 
     it->data.remove_file_on_destroy = false;
+
+    if (trim_after_commit) {
+        SRV_TRC(" - committed disk cache entry (%.3f MiB), trimming resident pages\n", it->data.size() / (1024.0 * 1024.0));
+        server_prompt_cache_trim_disk(it->data);
+    }
+
     return true;
 }
 

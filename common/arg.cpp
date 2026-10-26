@@ -1750,6 +1750,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_CACHE_DIR_MAX").set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
+        {"--cache-dir-trim"},
+        "after committing a persistent prompt cache entry to disk, drop its resident pages (MADV_DONTNEED)\n"
+        "the entry is re-read from disk when reused, trading latency for a smaller resident set\n"
+        "no effect on platforms without MADV_DONTNEED (Windows, macOS)\n"
+        "(default: false)",
+        [](common_params & params) {
+            params.cache_dir_trim = true;
+        }
+    ).set_env("LLAMA_ARG_CACHE_DIR_TRIM").set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
         {"-kvu", "--kv-unified"},
         {"-no-kvu", "--no-kv-unified"},
         "use single unified KV buffer shared across all sequences (default: enabled if number of slots is auto)",
