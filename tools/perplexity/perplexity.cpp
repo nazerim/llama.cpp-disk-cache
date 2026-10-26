@@ -508,7 +508,18 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
     common_batch batch(ctx);
 
     std::vector<float> logits;
-    if (num_batches > 1) {
+    // LOCAL PATCH (streaming logits): the original reserves n_ctx * n_vocab floats up front - 7.6 GiB at
+    // n_ctx 8192 and 91 GiB at 98304 on this 248k-vocab model, so perplexity could never be measured at
+    // long context. process_logits() only needs (rows x n_vocab) and merely adds into nll/nll2, so each
+    // batch can be scored as it lands and its rows discarded. Exact, not an approximation: row i of a
+    // batch pairs with tokens[p_start + i + 1], and num_batches > 1 implies n_batch < n_ctx which
+    // implies n_seq == 1, so the accumulated layout was already single-sequence.
+    // LLAMA_PPL_NO_STREAM falls back to the upstream accumulate path so the two can be A/B'd in the
+    // same build and environment; unset, empty or 0 keeps streaming
+    const std::string no_stream = common_get_env("LLAMA_PPL_NO_STREAM");
+    const bool stream_logits = num_batches > 1 && params.logits_file.empty()
+        && (no_stream.empty() || no_stream == "0");
+    if (num_batches > 1 && !stream_logits) {
         logits.reserve(size_t(n_ctx) * n_vocab);
     }
 
@@ -538,6 +549,7 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
     // last 256 tokens.  Then, we split the input up into context window size chunks to
     // process the entire prompt.
     const int first = n_ctx/2;
+    int n_streamed = 0;   // LOCAL PATCH: rows scored per batch
 
     for (int i = 0; i < n_chunk; i += n_seq) {
         const int start =     i * n_ctx;
@@ -586,7 +598,32 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
 
             if (num_batches > 1 && n_outputs > 0) {
                 const auto * batch_logits = llama_get_logits(ctx);
-                logits.insert(logits.end(), batch_logits, batch_logits + size_t(n_outputs) * n_vocab);
+                if (stream_logits) {
+                    // LOCAL PATCH: score this batch's rows immediately, then drop them. Rows cover
+                    // positions [max(first, j*n_batch) .. min(n_ctx-1, (j+1)*n_batch-1)]; the last window
+                    // position has no next token to score against. num_batches > 1 implies
+                    // n_batch < n_ctx implies n_seq == 1, so there is exactly one sequence here.
+                    if (n_seq_batch != 1) {   // GGML_ASSERT is compiled out in Release
+                        LOG_ERR("%s: streaming requires n_seq == 1, got %d\n", __func__, n_seq_batch);
+                        return {tokens, -1, logit_history, prob_history};
+                    }
+                    const int p_start = std::max(first, j*n_batch);
+                    const int p_last  = std::min(n_ctx - 2, (j + 1)*n_batch - 1);
+                    const int n_rows  = p_last - p_start + 1;
+                    if (n_rows > 0) {
+                        if (n_rows > n_outputs) {
+                            LOG_ERR("%s: n_rows %d > n_outputs %d at batch %d\n", __func__, n_rows,
+                                    n_outputs, j);
+                            return {tokens, -1, logit_history, prob_history};
+                        }
+                        process_logits(n_vocab, batch_logits, tokens.data() + start + p_start, n_rows,
+                                       workers, nll, nll2, logit_history.data() + start + p_start,
+                                       prob_history.data() + start + p_start);
+                        n_streamed += n_rows;
+                    }
+                } else {
+                    logits.insert(logits.end(), batch_logits, batch_logits + size_t(n_outputs) * n_vocab);
+                }
             }
         }
 
@@ -608,7 +645,9 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
             const float * all_logits = num_batches > 1 ? logits.data() : llama_get_logits_ith(ctx, seq*n_ctx + first);
 
             llama_token * tokens_data = tokens.data() + start + seq*n_ctx + first;
-            if (!params.logits_file.empty()) {
+            if (stream_logits) {
+                // already scored per batch above
+            } else if (!params.logits_file.empty()) {
                 process_logits(logits_stream, n_vocab, all_logits,
                         tokens_data, n_ctx - 1 - first,
                         workers, log_probs, nll, nll2);
@@ -634,6 +673,15 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
             }
         }
 
+        if (stream_logits) {
+            // proves the streaming path scored precisely what the accumulate path would have
+            const int want = (n_ctx - 1 - first) * n_seq_batch;
+            if (n_streamed != want) {
+                LOG_ERR("%s: scored %d rows, expected %d (chunk %d)\n", __func__, n_streamed, want, i);
+                return {tokens, -1, logit_history, prob_history};
+            }
+            n_streamed = 0;
+        }
         logits.clear();
     }
     LOG("\n");
